@@ -12,10 +12,24 @@ warnings.filterwarnings('ignore')
 FUGLE_API_KEY = "OGVlYmE0M2MtZTVjYy00N2QzLWJhZTktMWU2NzI2Yzk4ZmMwIGQ3MTI4ZjYxLTM0ZGYtNGE0Ny04ZWNhLWJmOGJlM2FhOWZlMg=="
 
 # 1. 網頁配置
-st.set_page_config(page_title="將軍天眼 AI 戰情室 5.1", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="將軍天眼 AI 戰情室 5.2", layout="wide", page_icon="🦅")
 
-# --- 新增武裝：總經與全球大盤探照燈 ---
-@st.cache_data(ttl=300) # 大盤指數每 5 分鐘更新一次即可
+# --- 新增武裝一：法人籌碼追蹤炮 (每日盤後更新) ---
+@st.cache_data(ttl=3600)
+def fetch_institutional_data():
+    url = "https://openapi.twse.com.tw/v1/fund/T86_ALL"
+    try:
+        res = requests.get(url, timeout=10)
+        df = pd.DataFrame(res.json())
+        # 提取外資與投信買賣超股數，除以1000換算為「張」
+        df['ForeignBuy'] = pd.to_numeric(df['ForeignInvestorNetBuySell'], errors='coerce') / 1000
+        df['TrustBuy'] = pd.to_numeric(df['InvestmentTrustNetBuySell'], errors='coerce') / 1000
+        return df[['Code', 'ForeignBuy', 'TrustBuy']].set_index('Code')
+    except:
+        return pd.DataFrame()
+
+# --- 武裝二：總經與全球大盤探照燈 ---
+@st.cache_data(ttl=300)
 def fetch_macro_data():
     indices = {
         "🇺🇸 納斯達克 (昨收)": "^IXIC", 
@@ -36,7 +50,7 @@ def fetch_macro_data():
             macro_info[name] = {"price": 0, "change": 0, "pct": 0}
     return macro_info
 
-# --- 核心模組一：混合雙雷達 (免付費完美破解版) ---
+# --- 武裝三：混合雙雷達 (Fugle 即時) ---
 @st.cache_data(ttl=30)
 def get_realtime_top_etfs(api_key):
     url_twse = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
@@ -64,22 +78,18 @@ def get_realtime_top_etfs(api_key):
                 
                 if price is not None:
                     realtime_data.append({
-                        "Code": code,
-                        "Name": data.get('name', f"{code}"),
-                        "Price": float(price),
-                        "Change": float(change),
+                        "Code": code, "Name": data.get('name', f"{code}"),
+                        "Price": float(price), "Change": float(change),
                         "Volume": vol_shares / 1000 
                     })
-        except:
-            continue
+        except: continue
             
     if realtime_data:
         real_df = pd.DataFrame(realtime_data)
-        real_df = real_df.sort_values(by='Volume', ascending=False).head(12)
-        return real_df
+        return real_df.sort_values(by='Volume', ascending=False).head(12)
     return pd.DataFrame()
 
-# --- 核心模組二：Alpha 算力引擎 ---
+# --- 武裝四：Alpha 算力引擎 ---
 class Alpha_Engine:
     @staticmethod
     @st.cache_data(ttl=3600)
@@ -91,14 +101,13 @@ class Alpha_Engine:
             data['PV'] = data['TP'] * data['Volume']
             vwap = data['PV'].rolling(window=window).sum() / data['Volume'].rolling(window=window).sum()
             return data['Close'].rolling(window=window).mean().iloc[-1], vwap.iloc[-1]
-        except:
-            return None, None
+        except: return None, None
 
-# --- 戰情室網頁介面實作 ---
-st.title("🦅 將軍天眼 5.1：全球宏觀武裝版")
-st.caption(f"📡 數據源：Fugle 毫秒級 API + 全球市場觀測 | 系統自動刷新 | 同步時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+# ================= 戰情室 UI 介面 =================
+st.title("🦅 將軍天眼 5.2：法人籌碼武裝版")
+st.caption(f"📡 數據源：Fugle 毫秒即時 + TWSE 法人籌碼 | 系統自動刷新 | 同步時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# 🌍 新增橫欄：全球宏觀氣象台
+# 🌍 橫欄一：全球宏觀氣象台
 macro_data = fetch_macro_data()
 if macro_data:
     cols = st.columns(3)
@@ -107,7 +116,7 @@ if macro_data:
             st.metric(label=name, value=f"{data['price']:,.2f}", delta=f"{data['change']:,.2f} ({data['pct']:.2f}%)")
 st.divider()
 
-# 📊 第一橫欄：資金風格與生存線
+# 📊 橫欄二：資金風格
 col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
 tech_data = yf.Ticker("00830.TW").history(period="5d")
 div_data = yf.Ticker("0056.TW").history(period="5d")
@@ -121,7 +130,7 @@ if not tech_data.empty and not div_data.empty:
     with col_kpi3: st.metric("生存現金防線", "$138,691", "-$326,447", delta_color="inverse")
 st.divider()
 
-# 🔥 第二橫欄：Fugle 即時全市場熱度榜
+# 🔥 橫欄三：即時熱度雷達
 st.header("📡 盤中即時雷達 (今日成交量 TOP 12)")
 full_list = get_realtime_top_etfs(FUGLE_API_KEY)
 if not full_list.empty:
@@ -136,20 +145,27 @@ if not full_list.empty:
                 elif row['Change'] < 0: st.markdown(f":green[現價: {row['Price']:.2f} ▼]")
                 else: st.markdown(f"現價: {row['Price']:.2f} ▬")
                 st.caption(f"盤中成交量: {int(row['Volume']):,} 張")
-else:
-    st.error("❌ 無法取得數據。請確認網路狀態，或稍後再試。")
 st.divider()
 
-# 🎯 第三橫欄：主力成本與盤中即時狙擊號誌
-st.header("🎯 戰術決策：盤中即時狙擊號誌")
+# 🎯 橫欄四：主力成本與法人籌碼透視
+st.header("🎯 戰術決策：籌碼透視與即時狙擊號誌")
 engine = Alpha_Engine()
+inst_df = fetch_institutional_data() # 啟動法人籌碼雷達
+
 if not full_list.empty:
     top_8_df = top_12.head(8)
     decision_data = []
     for idx, row in top_8_df.iterrows():
         code, name, price = row['Code'], row['Name'], row['Price']
+        
+        # 1. 計算技術面成本
         ma20, vwap20 = engine.calculate_historical_vwap(code)
         
+        # 2. 獲取法人籌碼動向 (若無資料則為0)
+        foreign_buy = inst_df.loc[code, 'ForeignBuy'] if (not inst_df.empty and code in inst_df.index) else 0
+        trust_buy = inst_df.loc[code, 'TrustBuy'] if (not inst_df.empty and code in inst_df.index) else 0
+        
+        # 3. 戰略判定
         if vwap20 is not None and ma20 is not None:
             bias = ((price - vwap20) / vwap20) * 100
             if price < ma20 and price >= vwap20: signal, intensity = "🟢 假跌破", "🔥 強烈買進"
@@ -162,15 +178,24 @@ if not full_list.empty:
             
         decision_data.append({
             "代號": code, "名稱": name, "即時現價": price, 
-            "歷史主力成本(VWAP)": vwap20, "成本乖離%": bias, 
-            "盤中號誌": signal, "戰略建議": intensity
+            "歷史主力成本(VWAP)": vwap20, 
+            "外資動向(張)": foreign_buy, "投信動向(張)": trust_buy, # 🕵️ 新增籌碼欄位
+            "成本乖離%": bias, "盤中號誌": signal, "戰略建議": intensity
         })
 
     if decision_data:
         df_final = pd.DataFrame(decision_data)
         df_final.index = df_final.index + 1
+        
+        # 🎨 上色邏輯：買超(大於0)顯示紅色，賣超(小於0)顯示綠色
+        def color_net_buy(val):
+            if pd.isna(val) or val == 0: return ''
+            return 'color: #ff4b4b; font-weight: bold' if val > 0 else 'color: #00ff00; font-weight: bold'
+
         styled_df = df_final.style.format(
-            formatter={"即時現價": "{:.2f}", "歷史主力成本(VWAP)": "{:.2f}", "成本乖離%": "{:.2f}"}, na_rep="-"
+            formatter={"即時現價": "{:.2f}", "歷史主力成本(VWAP)": "{:.2f}", "成本乖離%": "{:.2f}", "外資動向(張)": "{:,.0f}", "投信動向(張)": "{:,.0f}"}, na_rep="-"
+        ).map(
+            color_net_buy, subset=['外資動向(張)', '投信動向(張)']
         ).map(
             lambda x: f'color: #00ff00; font-weight: bold' if '🟢' in str(x) else 
                       (f'color: #ff4b4b; font-weight: bold' if '🔴' in str(x) else 
@@ -178,4 +203,4 @@ if not full_list.empty:
             subset=['盤中號誌']
         )
         st.dataframe(styled_df, use_container_width=True)
-        
+        st.info("💡 **籌碼判讀指南**：外資與投信動向為前一交易日之盤後結算數據。紅色代表法人買超護盤，綠色代表法人倒貨抽資！")
